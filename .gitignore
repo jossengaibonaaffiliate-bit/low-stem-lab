@@ -1,0 +1,7 @@
+.tmp/
+.env
+credentials.json
+token.json
+__pycache__/
+.DS_Store
+flow-stem-lab/
