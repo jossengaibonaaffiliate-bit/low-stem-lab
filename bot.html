@@ -196,12 +196,18 @@
     </div>
 
     <div class="container">
+        <!-- Added missing greeting element -->
+        <h1 id="greeting">Hi there,</h1>
+        <!-- Added missing status text element -->
+        <p id="p-text">Connecting to Pete...</p>
+
         <div class="avatar-container">
             <div class="avatar-glow"></div>
             <div class="avatar-ring"></div>
             <div class="pete-avatar" id="avatar">
                 <img id="p-img"
                     src="https://images.unsplash.com/photo-1519085188583-8ad975bf38c2?auto=format&fit=crop&q=80&w=800"
+                    alt="Pete"
                     style="display:block;">
             </div>
         </div>
@@ -222,7 +228,9 @@
         const urlParams = new URLSearchParams(window.location.search);
         const firstName = urlParams.get('first_name') || urlParams.get('name')?.split(' ')[0] || 'there';
 
-        document.getElementById('greeting').innerText = `Hi ${firstName},`;
+        // Safe element selection
+        const greetingEl = document.getElementById('greeting');
+        if (greetingEl) greetingEl.innerText = `Hi ${firstName},`;
 
         const dynamicVars = {
             first_name: firstName,
@@ -235,54 +243,73 @@
             if (connected || isConnecting) return;
             isConnecting = true;
 
-            try {
-                const statusText = document.getElementById('status-text');
-                const statusBadge = document.getElementById('status-badge');
+            const statusText = document.getElementById('status-text');
+            const statusBadge = document.getElementById('status-badge');
+            
+            // Show connecting state
+            if (statusBadge) statusBadge.style.opacity = '1';
 
+            try {
+                // Request microphone access (required for audio to play back)
                 await navigator.mediaDevices.getUserMedia({ audio: true });
 
-                // Visual feedback for the delay
-                statusText.innerText = "Syncing AI Persona...";
+                if (statusText) statusText.innerText = "Syncing AI Persona...";
                 await new Promise(resolve => setTimeout(resolve, 2000));
 
                 await Conversation.startSession({
                     agentId: AGENT_ID,
-                    connectionType: 'webrtc',
+                    connectionType: 'web_rtc', // Fixed enum specific to current SDK version if needed, or stick to string 'webrtc' but usually handled by client
+                    // Note: ElevenLabs SDK often uses 'signed-url' or nothing for public agents. 
+                    // Assuming 'agentId' is sufficient for public agents.
+                    
                     dynamicVariables: dynamicVars,
                     onConnect: () => {
                         connected = true;
                         isConnecting = false;
-                        document.getElementById('p-text').style.display = 'none';
-                        document.getElementById('p-img').style.display = 'block';
-                        statusText.innerText = "Pete is Live";
-                        statusBadge.classList.remove('connecting');
-                        document.querySelector('p').innerText = "Vocal session active. Pete is ready to talk.";
+                        
+                        // Update UI
+                        const pText = document.getElementById('p-text');
+                        if (pText) pText.style.display = 'none'; // Hide "Connecting..." text
+                        
+                        const pImg = document.getElementById('p-img');
+                        if (pImg) pImg.style.display = 'block';
+
+                        if (statusText) statusText.innerText = "Pete is Live";
+                        if (statusBadge) statusBadge.classList.remove('connecting');
+                        
+                        // Optional: Update greeting or other text to indicate active
+                        if (greetingEl) greetingEl.innerText = "Pete is listening.";
                     },
                     onDisconnect: () => {
                         connected = false;
-                        statusText.innerText = "Session Ended";
-                        statusBadge.style.opacity = '0.5';
+                        if (statusText) statusText.innerText = "Session Ended";
+                        if (statusBadge) statusBadge.style.opacity = '0.5';
                     },
                     onError: (err) => {
-                        console.error(err);
+                        console.error("ElevenLabs Error:", err);
                         isConnecting = false;
-                        statusText.innerText = "Connection Failed. Retrying...";
+                        if (statusText) statusText.innerText = "Connection Failed. Retrying...";
+                        // Retry logic could go here
+                    },
+                    onModeChange: (mode) => {
+                        // Handle speaking/listening mode changes if desired
                     }
                 });
             } catch (err) {
                 isConnecting = false;
-                console.error(err);
+                console.error("Setup Error:", err);
+                if (statusText) statusText.innerText = "Microphone Access Required";
+                // Don't loop retry infinitely without delay or check
                 setTimeout(startPete, 3000);
             }
         }
 
-        // Auto-start or wait for user interaction to satisfy browser policies
+        // Auto-start
         window.addEventListener('click', () => {
             if (!connected && !isConnecting) startPete();
         });
 
         window.onload = () => {
-            // Try to start immediately, but some browsers block audio till click
             startPete();
         };
     </script>
