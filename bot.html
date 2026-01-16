@@ -224,34 +224,9 @@
 
         const urlParams = new URLSearchParams(window.location.search);
 
-        // 1. Get raw values
-        let rawFirst = urlParams.get('first_name');
-        let rawLast = urlParams.get('last_name');
-        let rawFull = urlParams.get('name');
-
-        let fName = '';
-        let lName = '';
-
-        // 2. Logic: Handle "Full Name in First Name field" edge case
-        if (rawFirst && !rawLast && rawFirst.trim().indexOf(' ') > 0) {
-            const parts = rawFirst.trim().split(' ');
-            fName = parts[0];
-            lName = parts.slice(1).join(' ');
-        }
-        // 3. Logic: Handle standard "first_name" + "last_name"
-        else if (rawFirst) {
-            fName = rawFirst;
-            lName = rawLast || '';
-        }
-        // 4. Logic: Handle single "name" param
-        else if (rawFull) {
-            const parts = rawFull.trim().split(' ');
-            fName = parts[0];
-            lName = parts.slice(1).join(' ');
-        }
-
-        fName = fName || 'there';
-        lName = lName || '';
+        // Strict approach: Trust the URL params implicitly
+        const fName = urlParams.get('first_name') || 'there';
+        const lName = urlParams.get('last_name') || '';
 
         // Safe element selection
         const greetingEl = document.getElementById('greeting');
