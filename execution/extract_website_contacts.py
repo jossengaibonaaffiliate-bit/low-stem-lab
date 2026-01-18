@@ -1,13 +1,16 @@
-
 import re
 import httpx
 import logging
 import sys
+import os
 import random
 import time
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 import html2text
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -78,21 +81,21 @@ def get_contact_pages(soup, base_url):
     return list(pages)[:4]  # Limit to 4 extra pages
 
 def search_duckduckgo(query):
-    """Search DuckDuckGo for missing emails."""
+    """Search DuckDuckGo for missing emails using the latest DDGS."""
     try:
         from duckduckgo_search import DDGS
         logger.info(f"Searching DuckDuckGo for: {query}")
         
         # Simple text search to look for email-like patterns in snippets
         emails = set()
-        with DDGS() as ddgs:
-            # Get top 5 results
-            results = [r for r in ddgs.text(query, max_results=5)]
-            
-            for res in results:
-                # Check snippet for emails
-                snippet_emails = extract_emails(res.get('body', ''))
-                emails.update(snippet_emails)
+        ddgs = DDGS()
+        # Get top 5 results
+        results = list(ddgs.text(query, max_results=5))
+        
+        for res in results:
+            # Check snippet for emails
+            snippet_emails = extract_emails(res.get('body', ''))
+            emails.update(snippet_emails)
                 
         return list(emails)
         
@@ -101,6 +104,45 @@ def search_duckduckgo(query):
         return []
     except Exception as e:
         logger.warning(f"DuckDuckGo search failed: {e}")
+        return []
+
+def search_anymailfinder(business_name, website_url=None):
+    """Search AnyMailFinder for business emails."""
+    api_key = os.getenv("ANYMAILFINDER_API_KEY")
+    if not api_key:
+        return []
+    
+    # Try to extract domain from website_url
+    domain = ""
+    if website_url:
+        parsed = urlparse(website_url)
+        domain = parsed.netloc or parsed.path.split('/')[0]
+        # Remove 'www.'
+        if domain.startswith("www."):
+            domain = domain[4:]
+
+    logger.info(f"Searching AnyMailFinder for: {business_name} (domain: {domain})")
+    url = "https://api.anymailfinder.com/v1.1/search/company.json"
+    headers = {"X-Api-Key": api_key}
+    
+    payload = {"company_name": business_name}
+    if domain:
+        payload["domain"] = domain
+
+    try:
+        with httpx.Client(timeout=20) as client:
+            resp = client.post(url, headers=headers, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                emails = [e['email'] for e in data.get('emails', []) if 'email' in e]
+                return emails
+            elif resp.status_code == 404:
+                return []
+            else:
+                logger.warning(f"AnyMailFinder error {resp.status_code}: {resp.text}")
+                return []
+    except Exception as e:
+        logger.error(f"AnyMailFinder request failed: {e}")
         return []
 
 def scrape_website_contacts(url: str, business_name: str) -> dict:
@@ -173,6 +215,15 @@ def scrape_website_contacts(url: str, business_name: str) -> dict:
                 if social_emails:
                     collected_emails.update(social_emails)
                     search_enriched = True
+            # 3c. AnyMailFinder Enrichment (Last Resort - High Quality)
+            if not collected_emails:
+                try:
+                    anymail_emails = search_anymailfinder(business_name, url)
+                    if anymail_emails:
+                        collected_emails.update(anymail_emails)
+                        search_enriched = True
+                except Exception as e:
+                    logger.error(f"AnyMailFinder step failed: {e}")
                 
         # 4. Return Results
         return {
