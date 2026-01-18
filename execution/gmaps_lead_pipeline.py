@@ -587,11 +587,55 @@ def run_pipeline(
         with open(f".tmp/gmaps_raw_{timestamp}.json", "w") as f:
             json.dump(businesses, f, indent=2)
 
+    # --- COST OPTIMIZATION: Deduplicate BEFORE enriching ---
+    if not skip_sheets and sheet_url:
+        print(f"\n{'='*60}")
+        print(f"Checking for existing leads to save costs...")
+        try:
+            # 1. Connect to sheet early
+            clean_query = search_query.replace(" ", "_").replace("/", "-")
+            sheet_name_to_use = sheet_name or f"{clean_query}_{datetime.now().strftime('%Y-%m-%d')}"
+            
+            spreadsheet, worksheet, is_new = get_or_create_sheet(sheet_url, sheet_name_to_use, use_folders=True)
+            results["sheet_url"] = spreadsheet.url
+            
+            # 2. Get existing IDs
+            existing_ids = get_existing_lead_ids(worksheet)
+            print(f"Found {len(existing_ids)} existing leads in sheet.")
+            
+            # 3. Filter businesses
+            new_businesses = []
+            skipped_count = 0
+            
+            for b in businesses:
+                # Generate ID using same logic as flatten_lead
+                b_name = b.get("title", "")
+                b_address = b.get("address", "")
+                
+                # Check for ID
+                b_id = generate_lead_id(b_name, b_address)
+                
+                if b_id in existing_ids:
+                    skipped_count += 1
+                else:
+                    new_businesses.append(b)
+            
+            print(f"Skipped {skipped_count} duplicates.")
+            print(f"Proceeding with {len(new_businesses)} new businesses.")
+            
+            businesses = new_businesses
+            
+        except Exception as e:
+            print(f"Warning: Could not pre-filter duplicates: {e}")
+            print("Will continue with all businesses and filter at save time.")
+    # -------------------------------------------------------
+
     # Step 2: Enrich with website data
     print(f"\n{'='*60}")
-    print(f"STEP 2: Enriching businesses with website contact data")
+    print(f"STEP 2: Enriching {len(businesses)} businesses with website contact data")
     print(f"{'='*60}")
 
+    # Start enrichment only for filtered list
     enriched = enrich_businesses(businesses, max_workers=workers)
     results["leads_enriched"] = len(enriched)
 

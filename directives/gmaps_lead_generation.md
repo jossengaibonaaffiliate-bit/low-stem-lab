@@ -37,6 +37,11 @@ Before running any scrape command, you **MUST** ask the user to:
 2.  **Share it** with the service account email: `scraper@lead-scraper-484617.iam.gserviceaccount.com` (Editor access).
 3.  **Provide the URL** of the sheet.
 
+**CRITICAL: WAIT for the user to provide the Sheet URL before running any scrape command.**
+*   Do not start the scrape and ask for the sheet later.
+*   Do not use `--skip-sheets` unless explicitly told to ignore the sheet requirement.
+*   The valid flow is: Ask for Sheet -> User Provides Sheet -> Run Scrape with `--sheet-url`.
+
 **Do not try to auto-create sheets**, as the service account has no storage quota. Always use `--sheet-url`.
 
 
