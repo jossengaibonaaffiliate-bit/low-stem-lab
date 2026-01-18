@@ -1,0 +1,219 @@
+{
+    "name": "Pete Bot - Step 1: Real-Time Logging (Groq Free)",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "pete-post-call",
+                "options": {}
+            },
+            "id": "webhook-trigger",
+            "name": "ElevenLabs Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [
+                200,
+                300
+            ],
+            "webhookId": "pete-post-call"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.groq.com/openai/v1/chat/completions",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a Sales Data Extractor. Analyze the transcript and extract the following fields into a JSON object:\\n- reason_for_call: The context of why they are speaking.\\n- qualification_status: 'Qualified', 'Unqualified', or 'Needs Analysis'.\\n- pain_points: List of problems mentioned (e.g. 'Low leads').\\n- proposed_solution: What did the agent offer?\\n- summary: A 1-sentence summary of the interaction.\\n- lead_name: Extracted name if present.\\n\\nRULES:\\n1. If the user is rude, hangs up, or says they are not interested, mark qualification_status as 'Unqualified'.\\n2. ALWAYS fill 'summary' and 'qualification_status'. Never leave them empty.\\n3. Use 'N/A' for other fields if information is missing.\\n4. Do NOT hallucinate names (like 'John Doe').\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"TRANSCRIPT:\\n{{ $node[\"ElevenLabs Webhook\"].json.body.transcript ? $node[\"ElevenLabs Webhook\"].json.body.transcript.map(t => t.role + ': ' + t.message).join('\\n') : '' }}\"\n    }\n  ],\n  \"response_format\": { \"type\": \"json_object\" }\n}",
+                "options": {}
+            },
+            "id": "groq-analysis",
+            "name": "Groq AI Analysis (Free)",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                450,
+                300
+            ],
+            "credentials": {
+                "httpHeaderAuth": {
+                    "id": "YOUR_GROQ_CREDENTIAL_ID",
+                    "name": "Groq API Key"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// Get the raw text from Groq\nconst content = items[0].json.choices[0].message.content;\nlet data = {};\n\ntry {\n  // Clean markdown if present and parse\n  const cleanJson = content.replace(/```json/g, \"\").replace(/```/g, \"\");\n  data = JSON.parse(cleanJson);\n} catch (e) {\n  data = { summary: \"Error parsing AI response: \" + e.message };\n}\n\n// GET REAL DATA FROM WEBHOOK\nconst body = $node[\"ElevenLabs Webhook\"].json.body;\n\n// Look for variables in the deep nested structure provided by ElevenLabs\nlet vars = {};\nif (body.data && body.data.conversation_initiation_client_data && body.data.conversation_initiation_client_data.dynamic_variables) {\n    vars = body.data.conversation_initiation_client_data.dynamic_variables;\n} else if (body.dynamic_variables) {\n    vars = body.dynamic_variables;\n} else {\n    vars = {};\n}\n\n// Priority 1: Webhook Variable (first_name, last_name)\nlet fName = vars.first_name || \"\";\nlet lName = vars.last_name || \"\";\n\n// Priority 2: AI guess - ONLY if real metadata is missing\nif (!fName && data.lead_name && !data.lead_name.includes(\"John Doe\") && !data.lead_name.includes(\"Emily Chen\")) {\n  const parts = data.lead_name.split(\" \");\n  fName = parts[0];\n  lName = parts.slice(1).join(\" \");\n}\n\nconst realEmail = vars.email || data.email || 'N/A';\n\n// Flatten Arrays and Ensure Defaults (No Empty Cells)\nconst pain_points = Array.isArray(data.pain_points) ? data.pain_points.join(\", \") : (data.pain_points || \"N/A\");\n\nlet solution = data.proposed_solution || \"N/A\";\nif (typeof data.proposed_solution === 'object' && data.proposed_solution !== null) {\n   const product = data.proposed_solution.product || '';\n   const benefits = Array.isArray(data.proposed_solution.benefits) ? data.proposed_solution.benefits.join(', ') : '';\n   solution = `${product} (${benefits})`;\n}\n\nreturn [{\n  json: {\n    first_name: fName,\n    last_name: lName,\n    email: realEmail,\n    status: data.qualification_status || \"N/A\",\n    call_reason: data.reason_for_call || \"N/A\",\n    pain_points: pain_points,\n    solution: solution,\n    summary: data.summary || \"No summary provided\",\n    date: new Date().toISOString().split('T')[0]\n  }\n}];"
+            },
+            "id": "format-data",
+            "name": "Format for Sheets",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                700,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "sheetId": {
+                    "__rl": true,
+                    "mode": "fromURL",
+                    "value": "YOUR_GOOGLE_SHEET_URL_HERE"
+                },
+                "range": "A:I",
+                "options": {},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "Date": "={{ $json.date }}",
+                        "First Name": "={{ $json.first_name }}",
+                        "Last Name": "={{ $json.last_name }}",
+                        "Email": "={{ $json.email }}",
+                        "Qualification Status": "={{ $json.status }}",
+                        "Reason for Call": "={{ $json.call_reason }}",
+                        "Pain Points": "={{ $json.pain_points }}",
+                        "Proposed Solution": "={{ $json.solution }}",
+                        "Summary": "={{ $json.summary }}"
+                    },
+                    "matchingColumns": [],
+                    "schema": [
+                        {
+                            "id": "Date",
+                            "displayName": "Date",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "First Name",
+                            "displayName": "First Name",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Last Name",
+                            "displayName": "Last Name",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Email",
+                            "displayName": "Email",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Qualification Status",
+                            "displayName": "Qualification Status",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Reason for Call",
+                            "displayName": "Reason for Call",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Pain Points",
+                            "displayName": "Pain Points",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Proposed Solution",
+                            "displayName": "Proposed Solution",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Summary",
+                            "displayName": "Summary",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        }
+                    ]
+                }
+            },
+            "id": "google-sheets-append",
+            "name": "Log to Google Sheets",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4,
+            "position": [
+                950,
+                300
+            ],
+            "credentials": {
+                "googleSheetsOAuth2Api": {
+                    "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+                    "name": "Google Sheets account"
+                }
+            }
+        }
+    ],
+    "connections": {
+        "ElevenLabs Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "Groq AI Analysis (Free)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Groq AI Analysis (Free)": {
+            "main": [
+                [
+                    {
+                        "node": "Format for Sheets",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Format for Sheets": {
+            "main": [
+                [
+                    {
+                        "node": "Log to Google Sheets",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

@@ -1,0 +1,120 @@
+{
+    "name": "Pete Bot - Step 2: Daily Digest Email",
+    "nodes": [
+        {
+            "parameters": {
+                "triggerTimes": {
+                    "item": [
+                        {
+                            "hour": 18
+                        }
+                    ]
+                }
+            },
+            "id": "schedule-trigger",
+            "name": "Every Day at 6PM",
+            "type": "n8n-nodes-base.cron",
+            "typeVersion": 1,
+            "position": [
+                200,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "operation": "get",
+                "sheetId": {
+                    "__rl": true,
+                    "mode": "fromURL",
+                    "value": "YOUR_GOOGLE_SHEET_URL_HERE"
+                },
+                "range": "A:H",
+                "options": {}
+            },
+            "id": "read-sheet",
+            "name": "Read Today's Leads",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4,
+            "position": [
+                450,
+                300
+            ],
+            "credentials": {
+                "googleSheetsOAuth2Api": {
+                    "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+                    "name": "Google Sheets account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// Filter for today's date and format HTML\nconst today = new Date().toISOString().split('T')[0];\n// Assuming the sheet has a 'Date' column. If not, we just take all new rows since last run (requires storing state, but for simplicity here we just take all rows if we clear the sheet, or filter by date column created in step 1).\n\n// Let's assume we just want to send everything currently in the 'Unprocessed' state or just everything from today.\n// For now, let's just format ALL rows returned (assuming user clears sheet or filters in the read node).\n\nlet html = '<h1>Daily Lead Digest</h1><table border=\"1\" cellpadding=\"5\" style=\"border-collapse: collapse; width: 100%;\"><thead><tr style=\"background-color: #f2f2f2;\"><th>Name</th><th>Status</th><th>Pain Points</th><th>Summary</th></tr></thead><tbody>';\n\nitems.forEach(item => {\n  const row = item.json;\n  const statusColor = row.qualification_status === 'Qualified' ? '#d4edda' : (row.qualification_status === 'Unqualified' ? '#f8d7da' : '#fff3cd');\n  \n  html += `<tr style=\"background-color: ${statusColor}\">`;\n  html += `<td>${row.lead_name || 'N/A'}</td>`;\n  html += `<td>${row.qualification_status || 'N/A'}</td>`;\n  html += `<td>${row.pain_points || 'N/A'}</td>`;\n  html += `<td>${row.summary || 'N/A'}</td>`;\n  html += `</tr>`;\n});\n\nhtml += '</tbody></table>';\n\nreturn [{ json: { html_report: html, total_leads: items.length } }];"
+            },
+            "id": "format-report",
+            "name": "Format HTML Report",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                700,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "sendTo": "jojollapins@hotmail.com",
+                "subject": "📊 Daily Lead Summary: {{ $json.total_leads }} Calls Today",
+                "emailType": "html",
+                "message": "={{ $json.html_report }}"
+            },
+            "id": "send-email",
+            "name": "Send Daily Digest",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [
+                950,
+                300
+            ],
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "YOUR_GMAIL_CREDENTIAL_ID",
+                    "name": "Gmail account"
+                }
+            }
+        }
+    ],
+    "connections": {
+        "Every Day at 6PM": {
+            "main": [
+                [
+                    {
+                        "node": "Read Today's Leads",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Read Today's Leads": {
+            "main": [
+                [
+                    {
+                        "node": "Format HTML Report",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Format HTML Report": {
+            "main": [
+                [
+                    {
+                        "node": "Send Daily Digest",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

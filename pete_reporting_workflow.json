@@ -1,0 +1,262 @@
+{
+    "name": "Pete Bot - Master Workflow (Reporting + Logging + Scoring)",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "pete-post-call",
+                "options": {}
+            },
+            "id": "webhook-trigger",
+            "name": "ElevenLabs Webhook",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 1,
+            "position": [
+                200,
+                300
+            ],
+            "webhookId": "pete-post-call"
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "https://api.groq.com/openai/v1/chat/completions",
+                "authentication": "genericCredentialType",
+                "genericAuthType": "httpHeaderAuth",
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an expert lead qualification analyst. Analyze the following transcript between Peter (AI Solutions Coordinator) and a dentist/prospect.\\n\\nExtract specific details and output a strictly valid JSON object based on the following schema:\\n\\n{\\n  \\\"lead\\\": {\\n    \\\"first_name\\\": \\\"String (Extract or guess)\\\",\\n    \\\"last_name\\\": \\\"String (Extract or guess)\\\",\\n    \\\"practice_name\\\": \\\"String\\\",\\n    \\\"role\\\": \\\"practice_owner | office_manager | associate_dentist | staff | other\\\"\\n  },\\n  \\\"qualification_score\\\": {\\n    \\\"decision_authority\\\": 0-20,\\n    \\\"call_volume\\\": 0-20,\\n    \\\"operational_pain\\\": 0-20,\\n    \\\"automation_readiness\\\": 0-20,\\n    \\\"investment_willingness\\\": 0-20\\n  },\\n  \\\"signals\\\": {\\n    \\\"has_decision_authority\\\": boolean,\\n    \\\"missed_calls_reported\\\": boolean,\\n    \\\"after_hours_calls\\\": boolean,\\n    \\\"front_desk_overloaded\\\": boolean,\\n    \\\"currently_running_ads\\\": boolean,\\n    \\\"open_to_automation\\\": boolean\\n  },\\n  \\\"summary\\\": {\\n    \\\"main_pain_point\\\": \\\"String\\\",\\n    \\\"current_call_handling\\\": \\\"String\\\",\\n    \\\"why_they_booked\\\": \\\"String\\\",\\n    \\\"executive_summary\\\": \\\"String (2-3 sentences)\\\"\\n  },\\n  \\\"recommended_action\\\": {\\n    \\\"notes_for_human\\\": \\\"String\\\"\\n  }\\n}\\n\\nYou must infer the scores based on the conversation evidence. Use the provided context to fill in the values accurately.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"TRANSCRIPT:\\n\" + (($node[\"ElevenLabs Webhook\"].json.body.data?.transcript || $node[\"ElevenLabs Webhook\"].json.body.transcript || []).map(t => t.role + \": \" + t.message).join(\"\\n\") || \"(Transcript is empty detected)\")\n    }\n  ],\n  \"response_format\": { \"type\": \"json_object\" }\n}) }}",
+                "options": {}
+            },
+            "id": "groq-analysis",
+            "name": "Groq AI Analysis",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.1,
+            "position": [
+                450,
+                300
+            ],
+            "credentials": {
+                "httpHeaderAuth": {
+                    "id": "YOUR_GROQ_CREDENTIAL_ID",
+                    "name": "Groq API Key"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "// 1. Parse Groq Response\nconst response = items[0].json.choices[0].message.content;\nlet aiData = {};\ntry {\n  const cleanJson = response.replace(/```json/g, \"\").replace(/```/g, \"\").trim();\n  aiData = JSON.parse(cleanJson);\n} catch (e) {\n  throw new Error(\"Failed to parse Groq JSON response: \" + e.message);\n}\n\n// 2. Score Calculation\nconst scores = aiData.qualification_score;\nconst total_score = (scores.decision_authority || 0) + (scores.call_volume || 0) + (scores.operational_pain || 0) + (scores.automation_readiness || 0) + (scores.investment_willingness || 0);\n\nlet fit_status = \"disqualified\";\nlet next_step = \"disqualify\";\nlet priority = \"low\";\n\nif (total_score >= 80) {\n  fit_status = \"qualified\";\n  next_step = \"send_offer\";\n  priority = \"high\";\n}\nelse if (total_score >= 60) {\n  fit_status = \"medium_fit\";\n  next_step = \"send_follow_up\";\n  priority = \"medium\";\n}\n\n// 3. Merge with Real Metadata (Trust Webhook over AI for contact info)\nconst webhookBody = $node[\"ElevenLabs Webhook\"].json.body || {};\nlet realVars = {};\n\n// Check Deeply Nested Structure (Common in ElevenLabs Webhooks)\nif (webhookBody.data && webhookBody.data.conversation_initiation_client_data && webhookBody.data.conversation_initiation_client_data.dynamic_variables) {\n    realVars = webhookBody.data.conversation_initiation_client_data.dynamic_variables;\n} else if (webhookBody.conversation_initiation_client_data && webhookBody.conversation_initiation_client_data.dynamic_variables) {\n    realVars = webhookBody.conversation_initiation_client_data.dynamic_variables;\n} else if (webhookBody.dynamic_variables) {\n    realVars = webhookBody.dynamic_variables;\n}\n\n// Final Data Construction\nconst finalData = {\n  lead: {\n    first_name: realVars.first_name || aiData.lead.first_name || \"Unknown\",\n    last_name: realVars.last_name || aiData.lead.last_name || \"\",\n    email: realVars.email || \"N/A\",\n    practice_name: aiData.lead.practice_name || \"N/A\",\n    role: aiData.lead.role || \"N/A\"\n  },\n  qualification_score: {\n    ...scores,\n    total_score: total_score\n  },\n  fit_status: fit_status,\n  summary: aiData.summary,\n  recommended_action: {\n    ...aiData.recommended_action,\n    next_step: next_step,\n    priority: priority\n  },\n  // For Google Sheets Compatibility\n  date: new Date().toISOString().split('T')[0]\n};\n\nreturn { json: finalData };"
+            },
+            "id": "scoring-logic",
+            "name": "Scoring & Merge Logic",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                700,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "sendTo": "jojollapins@hotmail.com",
+                "subject": "={{ $json.fit_status === 'qualified' ? '🔥' : ($json.fit_status === 'medium_fit' ? '🔔' : '⚠️') }} Lead Report: {{ $json.lead.first_name }} {{ $json.lead.last_name }} ({{ $json.qualification_score.total_score }}/100)",
+                "emailType": "html",
+                "message": "=<h1>Lead Dossier: {{ $json.lead.first_name }} {{ $json.lead.last_name }} ({{ $json.lead.practice_name }})</h1>\n<hr>\n<h3>🎯 Status: <span style=\"color: {{ $json.fit_status === 'qualified' ? 'green' : ($json.fit_status === 'medium_fit' ? 'orange' : 'red') }}\">{{ $json.fit_status.toUpperCase() }}</span> ({{ $json.qualification_score.total_score }} pts)</h3>\n\n<h4>Summary</h4>\n<p><strong>Pain Point:</strong> {{ $json.summary.main_pain_point }}</p>\n<p><strong>Why They Booked:</strong> {{ $json.summary.why_they_booked }}</p>\n<p><strong>Current Handling:</strong> {{ $json.summary.current_call_handling }}</p>\n<p><strong>Proposed Action:</strong> {{ $json.recommended_action.next_step }} (Priority: {{ $json.recommended_action.priority }})</p>\n\n<h4>Score Breakdown</h4>\n<ul>\n  <li>Decision Authority: {{ $json.qualification_score.decision_authority }}</li>\n  <li>Call Volume: {{ $json.qualification_score.call_volume }}</li>\n  <li>Operational Pain: {{ $json.qualification_score.operational_pain }}</li>\n  <li>Automation Readiness: {{ $json.qualification_score.automation_readiness }}</li>\n  <li>Investment Willingness: {{ $json.qualification_score.investment_willingness }}</li>\n</ul>\n\n<h4>AI Notes</h4>\n<p>{{ $json.recommended_action.notes_for_human }}</p>\n\n<p><em>Contact: {{ $json.lead.email }}</em></p>\n<hr>\n<p><em>Autogenerated by Pete Intake System (Groq Powered)</em></p>"
+            },
+            "id": "send-email",
+            "name": "Send Lead Dossier",
+            "type": "n8n-nodes-base.gmail",
+            "typeVersion": 2.1,
+            "position": [
+                950,
+                300
+            ],
+            "credentials": {
+                "gmailOAuth2": {
+                    "id": "YOUR_GMAIL_CREDENTIAL_ID",
+                    "name": "Gmail account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "operation": "append",
+                "sheetId": {
+                    "__rl": true,
+                    "mode": "fromURL",
+                    "value": "YOUR_GOOGLE_SHEET_URL_HERE"
+                },
+                "range": "A:J",
+                "options": {},
+                "columns": {
+                    "mappingMode": "defineBelow",
+                    "value": {
+                        "Date": "={{ $json.date }}",
+                        "First Name": "={{ $json.lead.first_name }}",
+                        "Last Name": "={{ $json.lead.last_name }}",
+                        "Email": "={{ $json.lead.email }}",
+                        "Qualification Status": "={{ $json.fit_status }}",
+                        "Score": "={{ $json.qualification_score.total_score }}",
+                        "Reason for Call": "={{ $json.summary.why_they_booked }}",
+                        "Pain Points": "={{ $json.summary.main_pain_point }}",
+                        "Proposed Solution": "={{ $json.recommended_action.next_step }}",
+                        "Summary": "={{ $json.summary.executive_summary || $json.summary.main_pain_point }}"
+                    },
+                    "matchingColumns": [],
+                    "schema": [
+                        {
+                            "id": "Date",
+                            "displayName": "Date",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "First Name",
+                            "displayName": "First Name",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Last Name",
+                            "displayName": "Last Name",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Email",
+                            "displayName": "Email",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Qualification Status",
+                            "displayName": "Qualification Status",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Score",
+                            "displayName": "Score",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Reason for Call",
+                            "displayName": "Reason for Call",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Pain Points",
+                            "displayName": "Pain Points",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Proposed Solution",
+                            "displayName": "Proposed Solution",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        },
+                        {
+                            "id": "Summary",
+                            "displayName": "Summary",
+                            "required": false,
+                            "defaultMatch": false,
+                            "canBeUsedToMatch": true,
+                            "removed": false,
+                            "renamed": false
+                        }
+                    ]
+                }
+            },
+            "id": "google-sheets-append",
+            "name": "Log to Google Sheets",
+            "type": "n8n-nodes-base.googleSheets",
+            "typeVersion": 4,
+            "position": [
+                1200,
+                300
+            ],
+            "credentials": {
+                "googleSheetsOAuth2Api": {
+                    "id": "YOUR_GOOGLE_SHEETS_CREDENTIAL_ID",
+                    "name": "Google Sheets account"
+                }
+            }
+        }
+    ],
+    "connections": {
+        "ElevenLabs Webhook": {
+            "main": [
+                [
+                    {
+                        "node": "Groq AI Analysis",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Groq AI Analysis": {
+            "main": [
+                [
+                    {
+                        "node": "Scoring & Merge Logic",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Scoring & Merge Logic": {
+            "main": [
+                [
+                    {
+                        "node": "Send Lead Dossier",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Lead Dossier": {
+            "main": [
+                [
+                    {
+                        "node": "Log to Google Sheets",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    }
+}

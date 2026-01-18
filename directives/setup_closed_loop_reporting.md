@@ -7,32 +7,43 @@ Establish a zero-infrastructure, "Serverless" reporting system that sends a prof
 1.  **Trigger (Webhook):** Receives the `post_call_transcription` event from ElevenLabs.
 2.  **Action (Gmail/Email):** Formats and sends the lead details, summary, and transcript to your inbox.
 
+## Batching Architecture (Store & Forward)
+We will split this into two workflows to keep your data organized and your inbox clean.
+
+1.  **Workflow 1 (Real-Time Logger):** 
+    *   **Trigger:** ElevenLabs Webhook (Call Ends).
+    *   **Action:** Analyzes the call -> Saves row to **Google Sheets**.
+2.  **Workflow 2 (Daily Digest):** 
+    *   **Trigger:** Schedule (e.g., 6:00 PM).
+    *   **Action:** Reads all rows from today -> Sends **One Summary Email**.
+
 ## Setup Instructions
 
-### 1. In n8n: Create the "Receiver"
-*   Create a **New Workflow**.
-*   Add a **Webhook** node.
-*   Set Method to **POST**.
-*   **Copy the Test URL** provided (until you are ready to go live, then use the Production URL).
+### Phase 1: The Database (Google Sheets)
+1.  Create a new Google Sheet named `Pete Lead Database`.
+2.  Create the following headers in Row 1:
+    *   `Date`
+    *   `Lead Name`
+    *   `Phone`
+    *   `Qualification Status`
+    *   `Reason for Call`
+    *   `Pain Points`
+    *   `Proposed Solution`
+    *   `Summary`
 
-### 2. In ElevenLabs: Connect the Agent
-*   Go to your **ElevenLabs Agent Settings**.
-*   Find the **Post-call Webhook** field.
-*   Paste your **n8n Webhook URL**.
-*   Set the event type to `post_call_transcription`.
+### Phase 2: The Logger (n8n)
+1.  Import `pete_workflow_1_logging.json`.
+2.  **Configure:**
+    *   **ElevenLabs Webhook:** Add the URL to your ElevenLabs agent settings.
+    *   **Google Sheets Node:** Select your new `Pete Lead Database` sheet.
+    *   **Mapping:** Ensure the AI output maps to the correct Columns (A-H).
 
-### 3. In n8n: Map the Email
-*   Add an **Email** node (or Gmail node) connected to the Webhook.
-*   **Connect your account** (SMTP or Gmail OAuth).
-*   **Recipient:** Your email address.
-*   **Subject:** `🔔 New Lead Dossier: {{$json["body"]["analysis"]["transcript_summary"]}}`
-*   **HTML Content:** Construct your dossier by clicking on the items from the Webhook:
-    *   **Summary:** `{{$json["body"]["analysis"]["transcript_summary"]}}`
-    *   **Evaluation:** `{{$json["body"]["analysis"]["call_evaluation"]}}`
-    *   **Transcript:** `{{$json["body"]["transcript"]}}`
+### Phase 3: The Digest (n8n)
+1.  Import `pete_workflow_2_digest.json`.
+2.  **Configure:**
+    *   **Schedule Node:** Set your preferred time (default: 6 PM).
+    *   **Google Sheets Node:** Select the same `Pete Lead Database`.
+    *   **Email Node:** Confirm your email address.
 
-## Advantages
-*   **Self-Hostable:** n8n can be run on your own server or in their cloud.
-*   **Visual Debugging:** Much clearer execution paths than Make.
-*   **Flexible:** Easily add logic like "If lead is hot, send Slack alert".
+This ensures you have a permanent Excel-style record of every lead, plus a clean daily executive summary.
 
