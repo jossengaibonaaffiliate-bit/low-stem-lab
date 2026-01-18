@@ -90,20 +90,21 @@
 
         async function startPete() {
             try {
-                // 1. Validating Audio Context (Fix for 'Ends after few seconds')
-                // Browsers suspend audio if no user interaction. We try to resume it.
                 const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+                // 1. Force Resume AudioContext (Do NOT return/stop)
                 if (audioContext.state === 'suspended') {
-                    console.log("Audio Context Suspended - Waiting for interaction");
-                    startBtn.style.display = 'block';
-                    statusEl.innerText = "Click Start to Begin";
-                    return; // Wait for button click
+                    console.log("Audio Context Suspended - Attempting Resume...");
+                    await audioContext.resume().catch(e => console.log("Resume failed initially:", e));
                 }
 
-                statusEl.innerText = "Connecting...";
+                statusEl.innerText = "Requesting Access...";
 
-                // 2. Request Mic (Required)
+                // 2. Request Mic (This usually unlocks AudioContext)
                 await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                statusEl.innerText = "Connecting...";
+                statusEl.style.color = "#FEF3C7"; // Amber
 
                 // 3. Start ElevenLabs Session
                 conversation = await Conversation.startSession({
@@ -138,13 +139,12 @@
             } catch (err) {
                 console.error("Setup error:", err);
                 if (err.name === 'NotAllowedError' || err.name === 'NotReadableError') {
-                    statusEl.innerText = "Microphone Blocked. Allow access to speak.";
+                    statusEl.innerText = "Microphone Blocked. Click Start.";
                 } else {
-                    statusEl.innerText = "Connection Failed";
+                    statusEl.innerText = "Click Start to Retry";
                 }
                 statusEl.style.color = "#EF4444";
-                startBtn.style.display = 'block'; // Show retry
-                startBtn.innerText = "Retry";
+                startBtn.style.display = 'block';
             }
         }
 
